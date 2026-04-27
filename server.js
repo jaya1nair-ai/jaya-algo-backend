@@ -72,7 +72,7 @@ app.post('/optionchain', async (req, res) => {
   }
 });
 
-// 4. GEMINI AI ANALYSIS
+// 5. GEMINI AI ANALYSIS
 app.post('/ai', async (req, res) => {
   const { prompt } = req.body;
   const apiKey = process.env.GEMINI_API_KEY;
@@ -81,35 +81,25 @@ app.post('/ai', async (req, res) => {
   if (!apiKey) return res.status(500).json({ error: 'GEMINI_API_KEY is missing in Render environment variables.' });
 
   try {
-    // Call Gemini 1.5 Flash via standard REST API
+    // UPDATED: Pointing to gemini-2.5-flash instead of the deprecated 1.5 version
     const response = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
       {
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-            temperature: 0.2 // Lower temp for more deterministic JSON output
-        }
+        generationConfig: { temperature: 0.2 }
       },
       { headers: { 'Content-Type': 'application/json' } }
     );
 
-    // Extract the text response
     const aiText = response.data.candidates[0].content.parts[0].text;
-
-    // We map the response into the format the frontend currently expects
-    // (which was originally formatted for Anthropic's output structure)
-    res.json({
-        content: [ { text: aiText } ]
-    });
-
+    res.json({ content: [ { text: aiText } ] });
   } catch (error) {
-    console.error("AI Analysis failed:", error.response?.data || error.message);
-    res.status(500).json({
-      error: 'AI API Error: ' + (error.response?.data?.error?.message || error.message)
+    res.status(500).json({ 
+      error: 'AI API Error: ' + (error.response?.data?.error?.message || error.message) 
     });
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT} - Configured for Upstox & Gemini`);
+  console.log(`Server running on port ${PORT} - Configured for Upstox & Gemini 2.5 Flash`);
 });
