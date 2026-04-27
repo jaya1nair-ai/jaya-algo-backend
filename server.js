@@ -1,91 +1,115 @@
+require('dotenv').config();
 const express = require('express');
-const cors    = require('cors');
-const fetch   = (...args) => import('node-fetch').then(({default: f}) => f(...args));
+const cors = require('cors');
+const axios = require('axios');
 
-const app  = express();
+const app = express();
+app.use(cors());
+app.use(express.json());
+
 const PORT = process.env.PORT || 3000;
 
-app.use(cors());
-app.use(express.json({ limit: '2mb' }));
-
-// Health check
+// 1. HEALTH CHECK
 app.get('/', (req, res) => {
-  res.json({ status: 'Jaya AlgoTrader Backend is running ✅' });
+  res.json({ status: 'live', broker: 'upstox' });
 });
 
-// ── OPTION CHAIN PROXY ─────────────────────────────────────
-app.post('/optionchain', async (req, res) => {
-  const { token, clientId, underlyingScrip, underlyingSeg, expiry } = req.body;
-  if (!token || !clientId) return res.status(400).json({ error: 'Missing token or clientId' });
+// 2. TEST UPSTOX TOKEN
+app.post('/testtoken', async (req, res) => {
+  const { token } = req.body;
+ 
+  if (!token) {
+    return res.status(400).json({ error: 'Missing token' });
+  }
+
   try {
-    const response = await fetch('https://api.dhan.co/v2/optionchain', {
-      method: 'POST',
+    // Upstox Profile API to verify token validity
+    const response = await axios.get('https://api.upstox.com/v2/user/profile', {
       headers: {
-        'access-token': token,
-        'client-id':    clientId,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        UnderlyingScrip: underlyingScrip,
-        UnderlyingSeg:   underlyingSeg || 'IDX_I',
-        Expiry:          expiry,
-      }),
+        'Accept': 'application/json',
+        'Authorization': `Bearer ${token}`
+      }
     });
-    const data = await response.json();
-    if (!response.ok) return res.status(response.status).json({ error: data });
-    res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.json({ status: 'success', data: response.data.data });
+  } catch (error) {
+    console.error("Token test failed:", error.response?.data || error.message);
+    res.status(error.response?.status || 500).json({
+      status: 'error',
+      error: error.response?.data || error.message
+    });
   }
 });
 
-// ── ANTHROPIC AI PROXY ─────────────────────────────────────
+// 3. FETCH UPSTOX OPTION CHAIN
+app.post('/optionchain', async (req, res) => {
+  // Notice we no longer ask for clientId here!
+  const { token, instrumentKey, expiry } = req.body;
+ 
+  if (!token || !instrumentKey || !expiry) {
+    return res.status(400).json({ error: 'Missing token, instrumentKey, or expiry payload' });
+  }
+
+  try {
+    const response = await axios.get('https://api.upstox.com/v2/option/chain', {
+      params: {
+        instrument_key: instrumentKey,
+        expiry_date: expiry
+      },
+      headers: {
+        'Accept': 'application/json',
+        'Authorization': `Bearer ${token}`
+      }
+    });
+   
+    // Upstox wraps the chain inside a data object
+    res.json({ status: 'success', data: response.data.data });
+  } catch (error) {
+    console.error("Option chain fetch failed:", error.response?.data || error.message);
+    res.status(error.response?.status || 500).json({
+      status: 'error',
+      error: error.response?.data || error.message
+    });
+  }
+});
+
+// 4. GEMINI AI ANALYSIS
 app.post('/ai', async (req, res) => {
   const { prompt } = req.body;
-  if (!prompt) return res.status(400).json({ error: 'Missing prompt' });
-  try {
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type':      'application/json',
-        'x-api-key':         process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-      },
-      body: JSON.stringify({
-        model:      'claude-sonnet-4-20250514',
-        max_tokens: 1600,
-        messages:   [{ role: 'user', content: prompt }],
-      }),
-    });
-    const data = await response.json();
-    if (!response.ok) return res.status(response.status).json({ error: data });
-    res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+  const apiKey = process.env.GEMINI_API_KEY;
 
-// ── QUOTE / LTP PROXY ──────────────────────────────────────
-app.post('/quote', async (req, res) => {
-  const { token, clientId, securities } = req.body;
-  if (!token || !clientId) return res.status(400).json({ error: 'Missing token or clientId' });
+  if (!prompt) return res.status(400).json({ error: 'Missing prompt' });
+  if (!apiKey) return res.status(500).json({ error: 'GEMINI_API_KEY is missing in Render environment variables.' });
+
   try {
-    const response = await fetch('https://api.dhan.co/v2/marketfeed/ltp', {
-      method: 'POST',
-      headers: {
-        'access-token': token,
-        'client-id':    clientId,
-        'Content-Type': 'application/json',
+    // Call Gemini 1.5 Flash via standard REST API
+    const response = await axios.post(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+      {
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: {
+            temperature: 0.2 // Lower temp for more deterministic JSON output
+        }
       },
-      body: JSON.stringify({ securities }),
+      { headers: { 'Content-Type': 'application/json' } }
+    );
+
+    // Extract the text response
+    const aiText = response.data.candidates[0].content.parts[0].text;
+
+    // We map the response into the format the frontend currently expects
+    // (which was originally formatted for Anthropic's output structure)
+    res.json({
+        content: [ { text: aiText } ]
     });
-    const data = await response.json();
-    res.json(data);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+
+  } catch (error) {
+    console.error("AI Analysis failed:", error.response?.data || error.message);
+    res.status(500).json({
+      error: 'AI API Error: ' + (error.response?.data?.error?.message || error.message)
+    });
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`✅ Jaya AlgoTrader backend running on port ${PORT}`);
+  console.log(`Server running on port ${PORT} - Configured for Upstox & Gemini`);
 });
