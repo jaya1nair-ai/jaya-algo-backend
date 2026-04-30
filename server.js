@@ -83,7 +83,7 @@ app.post('/ai', async (req, res) => {
   try {
     // UPDATED: Pointing to gemini-2.5-flash instead of the deprecated 1.5 version
     const response = await axios.post(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash_lite:generateContent?key=${apiKey}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key=${apiKey}`,
       {
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: { temperature: 0.2 }
